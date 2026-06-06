@@ -36,22 +36,40 @@ st.markdown("""
         border: 1px solid #333;
         margin-bottom: 15px;
     }
-    /* Style open-link button nicely to match download button */
     .open-link-btn {
         display: inline-block;
-        background-color: #4B4B4B;
+        background-color: #FF4B4B;
         color: white !important;
-        padding: 10px 15px;
+        padding: 12px 20px;
         text-decoration: none;
         border-radius: 8px;
         font-weight: bold;
         text-align: center;
         width: 100%;
-        margin-top: 5px;
+        margin: 5px 0;
+        font-size: 1.1rem;
         transition: background-color 0.3s;
     }
     .open-link-btn:hover {
-        background-color: #333333;
+        background-color: #D32F2F;
+    }
+    .yt-btn {
+        display: inline-block;
+        background-color: #FF0000;
+        color: white !important;
+        padding: 14px 20px;
+        text-decoration: none;
+        border-radius: 8px;
+        font-weight: bold;
+        text-align: center;
+        width: 100%;
+        margin: 8px 0;
+        font-size: 1.1rem;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        transition: background-color 0.3s;
+    }
+    .yt-btn:hover {
+        background-color: #B71C1C;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -64,15 +82,13 @@ def format_size(bytes_size):
     return f"{round(mb, 1)} MB"
 
 # --- SERVER-SIDE STREAM DOWNLOADER ---
-# This helper function fetches the raw bytes of the video/image from the CDN.
-# By passing this as a callback to st.download_button, it ONLY downloads when clicked!
 def fetch_media_bytes(url):
     headers = {
         'User-Agent': MOBILE_UA,
         'Referer': 'https://www.tiktok.com/' if 'tiktok' in url or 'byteoversea' in url else ''
     }
     try:
-        response = requests.get(url, headers=headers, stream=True, timeout=30)
+        response = requests.get(url, headers=headers, stream=True, timeout=25)
         response.raise_for_status()
         buffer = io.BytesIO()
         for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
@@ -81,8 +97,18 @@ def fetch_media_bytes(url):
         buffer.seek(0)
         return buffer.getvalue()
     except Exception as e:
-        st.error(f"Error streaming download: {e}")
+        print(f"Error streaming download: {e}")
         return None
+
+# --- SAFE CALLBACK GENERATOR ---
+# Streamlit crashes if callable returns None, so we always return a text fallback
+def make_download_callback(url):
+    def callback():
+        bytes_data = fetch_media_bytes(url)
+        if not bytes_data:
+            return "Error: Direct server-side download failed. Please use the fallback browser link below.".encode('utf-8')
+        return bytes_data
+    return callback
 
 @lru_cache(maxsize=50)
 def cached_extract_logic(url: str):
@@ -107,7 +133,6 @@ def cached_extract_logic(url: str):
             audio_option = None
             slides = []
             
-            # Detect slideshows (TikTok/Instagram)
             if info.get('_type') == 'playlist' or 'entries' in info:
                 for entry in info.get('entries', []):
                     if entry:
@@ -136,7 +161,7 @@ def cached_extract_logic(url: str):
                         "url": f['url']
                     }
 
-                # 2. VIDEO WITH AUDIO (MP4 only)
+                # 2. VIDEO WITH AUDIO (MP4 Preference)
                 elif f.get('vcodec') != 'none' and f.get('acodec') != 'none' and f.get('ext') == 'mp4':
                     height = f.get('height', 0)
                     if not height: 
@@ -204,10 +229,9 @@ def try_social_image_scrape(url):
         pass
     return None
 
-
 # --- UI LAYOUT ---
 st.markdown('<div class="main-title">📥 Multi-Downloader</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Direct, high-speed downloads for TikTok, YouTube, Instagram, and more.</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Direct downloads for TikTok & IG. Secure browser pathways for YouTube.</div>', unsafe_allow_html=True)
 
 url_input = st.text_input("Paste your link here:", placeholder="https://...")
 
@@ -218,7 +242,6 @@ if url_input:
         if data and data.get("status") == "success":
             st.success("Analysis Complete!")
             
-            # Divide UI layout into columns
             col1, col2 = st.columns([1, 1.3])
             
             with col1:
@@ -229,76 +252,98 @@ if url_input:
                     
             with col2:
                 st.subheader(data.get("title", "Post Media"))
+                source_platform = data.get('source', '').lower()
                 st.write(f"**Platform:** {data.get('source', 'Social Media')}")
                 st.write("---")
 
                 options = data.get("options", [])
                 slides = data.get("slides", [])
 
-                # --- 1. SLIDESHOW / PHOTO CAROUSELS ---
+                # Determine if it's YouTube / Google Video
+                is_youtube = "youtube" in source_platform or "youtube" in url_input.lower() or "youtu.be" in url_input.lower()
+
+                # --- 1. HANDLING SLIDESHOWS (TikTok / Instagram) ---
                 if slides:
                     st.write(f"### 📸 Photos Found ({len(slides)})")
                     for i, slide in enumerate(slides):
                         with st.expander(f"🖼️ View Photo {i+1}"):
                             st.image(slide['url'], width='stretch')
-                            # Native download button for slides
                             st.download_button(
                                 label=f"📥 Save Photo {i+1} to Device",
-                                data=fetch_media_bytes(slide["url"]),
+                                data=make_download_callback(slide["url"]),
                                 file_name=f"photo_{i+1}.jpg",
                                 mime="image/jpeg",
                                 key=f"dl_slide_{i}"
                             )
 
-                # --- 2. VIDEO/AUDIO DIRECT DOWNLOADS ---
+                # --- 2. HANDLING VIDEOS & AUDIO ---
                 if options:
-                    st.write("### ⬇️ Save to Device (No redirection):")
-                    
-                    # Highlight Best Quality
                     video_only_options = [opt for opt in options if opt["type"] == "video"]
                     best_option = video_only_options[0] if video_only_options else None
-                    
-                    if best_option:
-                        st.write("⭐ **Recommended Best Video:**")
-                        # Native Streamlit button downloads directly from server to local storage
-                        st.download_button(
-                            label=f"🚀 Direct Download: {best_option['label']}",
-                            data=fetch_media_bytes(best_option["url"]),
-                            file_name=f"video_{best_option['res_val']}p.mp4",
-                            mime="video/mp4",
-                            type="primary",
-                            key="dl_best_native"
-                        )
-                        st.write("---")
 
-                    # Other resolutions
-                    for i, opt in enumerate(options):
-                        # Skip showing the recommended one twice if we already highlighted it
-                        if best_option and opt["url"] == best_option["url"]:
-                            continue
-                        
-                        ext = "mp4" if opt["type"] == "video" else "mp3"
-                        mime_type = "video/mp4" if opt["type"] == "video" else "audio/mpeg"
-                        
-                        st.download_button(
-                            label=f"📥 Download {opt['label']}",
-                            data=fetch_media_bytes(opt["url"]),
-                            file_name=f"media_{opt.get('res_val', 'audio')}.{ext}",
-                            mime=mime_type,
-                            key=f"dl_native_{i}"
-                        )
-                        
-                        # Alternative URL link in case of network timeout
-                        st.markdown(
-                            f'<a href="{opt["url"]}" target="_blank" class="open-link-btn">🔗 Open Direct Link (Fallback)</a>', 
-                            unsafe_allow_html=True
-                        )
+                    # A. YOUTUBE SPECIFIC DIRECT LINK (To bypass 403 blocks)
+                    if is_youtube:
+                        st.warning("⚠️ **YouTube Link Detected:** YouTube blocks proxy servers. Please use the direct links below to save your file securely.")
+                        if best_option:
+                            st.write("⭐ **Recommended Best Video:**")
+                            st.markdown(
+                                f'<a href="{best_option["url"]}" target="_blank" class="yt-btn">🔗 Open & Save Video ({best_option["label"].split("(")[-1]}</a>', 
+                                unsafe_allow_html=True
+                            )
+                            st.info("💡 **Tip:** Video link open hone par right-click karke 'Save video as...' select karein.")
+                            st.write("---")
 
-            # --- 3. EXPLAINER NOTE ---
-            st.info(
-                "💡 **How it works:** Clicking the red/blue download buttons will download the file directly to your device via our server (no new tabs). "
-                "If a download times out, use the grey 'Open Direct Link' button instead."
-            )
-            
+                        st.write("### 🎛️ Other Resolutions:")
+                        for i, opt in enumerate(options):
+                            if best_option and opt["url"] == best_option["url"]:
+                                continue
+                            label_clean = opt["label"]
+                            st.markdown(
+                                f'<a href="{opt["url"]}" target="_blank" class="open-link-btn">🔗 Open {label_clean}</a>', 
+                                unsafe_allow_html=True
+                            )
+
+                    # B. TIKTOK / INSTAGRAM DIRECT SERVER SAVE
+                    else:
+                        st.write("### ⬇️ Save to Device (Direct):")
+                        if best_option:
+                            st.write("⭐ **Recommended Best Video:**")
+                            # Uses lambda callback to evaluate only on click
+                            st.download_button(
+                                label=f"🚀 Direct Download: {best_option['label']}",
+                                data=make_download_callback(best_option["url"]),
+                                file_name=f"video_{best_option['res_val']}p.mp4",
+                                mime="video/mp4",
+                                type="primary",
+                                key="dl_best_native"
+                            )
+                            st.write("---")
+
+                        for i, opt in enumerate(options):
+                            if best_option and opt["url"] == best_option["url"]:
+                                continue
+                            ext = "mp4" if opt["type"] == "video" else "mp3"
+                            mime_type = "video/mp4" if opt["type"] == "video" else "audio/mpeg"
+                            
+                            st.download_button(
+                                label=f"📥 Download {opt['label']}",
+                                data=make_download_callback(opt["url"]),
+                                file_name=f"media_{opt.get('res_val', 'audio')}.{ext}",
+                                mime=mime_type,
+                                key=f"dl_native_{i}"
+                            )
+
+            # --- 3. PREVIEW PLAYER ---
+            if not is_youtube:
+                st.write("---")
+                st.write("### 🎬 Instant Media Preview")
+                preview_video = [opt for opt in options if opt["type"] == "video"]
+                preview_audio = [opt for opt in options if opt["type"] == "audio"]
+                
+                if preview_video:
+                    st.video(preview_video[0]["url"])
+                elif preview_audio:
+                    st.audio(preview_audio[0]["url"])
+
         else:
             st.error("Error: Could not retrieve media. Please make sure the link is correct and public.")
