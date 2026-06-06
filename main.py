@@ -29,46 +29,22 @@ st.markdown("""
         color: #666;
         margin-bottom: 30px;
     }
-    .media-card {
-        background-color: #1E1E1E;
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #333;
-        margin-bottom: 15px;
-    }
     .open-link-btn {
         display: inline-block;
-        background-color: #4B4B4B;
+        background-color: #FF4B4B;
         color: white !important;
-        padding: 10px 15px;
+        padding: 12px 20px;
         text-decoration: none;
         border-radius: 8px;
         font-weight: bold;
         text-align: center;
         width: 100%;
-        margin-top: 5px;
+        margin: 5px 0;
+        font-size: 1.1rem;
         transition: background-color 0.3s;
     }
     .open-link-btn:hover {
-        background-color: #333333;
-    }
-    .yt-btn {
-        display: inline-block;
-        background-color: #FF0000;
-        color: white !important;
-        padding: 14px 20px;
-        text-decoration: none;
-        border-radius: 8px;
-        font-weight: bold;
-        text-align: center;
-        width: 100%;
-        margin: 8px 0;
-        font-size: 1.1rem;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        transition: background-color 0.3s;
-    }
-    .yt-btn:hover {
-        background-color: #B71C1C;
+        background-color: #D32F2F;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -104,7 +80,7 @@ def make_download_callback(url):
     def callback():
         bytes_data = fetch_media_bytes(url)
         if not bytes_data:
-            return "Error: Direct server-side download failed. Please use the fallback browser link below.".encode('utf-8')
+            return "Error: Direct server-side download failed.".encode('utf-8')
         return bytes_data
     return callback
 
@@ -229,7 +205,7 @@ def try_social_image_scrape(url):
 
 # --- STREAMLIT UI ---
 st.markdown('<div class="main-title">📥 Multi-Downloader</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">Download social media videos, audio, and slides directly.</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Direct, ad-free social media downloads in one click.</div>', unsafe_allow_html=True)
 
 url_input = st.text_input("Paste your link here:", placeholder="https://...")
 
@@ -240,13 +216,12 @@ if url_input:
         if data and data.get("status") == "success":
             st.success("Analysis Complete!")
             
-            # Formats and Slides list
             options = data.get("options", [])
             slides = data.get("slides", [])
             source_platform = data.get('source', '').lower()
             is_youtube = "youtube" in source_platform or "youtube" in url_input.lower() or "youtu.be" in url_input.lower()
 
-            # Separate video options
+            # Separate video and audio options
             video_only_options = [opt for opt in options if opt["type"] == "video"]
             audio_only_options = [opt for opt in options if opt["type"] == "audio"]
             best_option = video_only_options[0] if video_only_options else None
@@ -254,13 +229,23 @@ if url_input:
             # Left and Right UI Column Setup
             col1, col2 = st.columns([1.1, 1.2])
             
-            # --- LEFT COLUMN (STATIC THUMBNAIL REPLACED WITH PREVIEW PLAYER) ---
+            # --- LEFT COLUMN (PREVIEW PLAYER WITH POSTER IMAGE FIRST) ---
             with col1:
-                st.write("### 🎬 Media Player Preview")
+                st.write("### 🎬 Media Preview")
                 if video_only_options:
-                    # Video preview player with direct link stream
-                    st.video(video_only_options[0]["url"])
-                    st.caption("📺 **Tip:** Direct Download ke liye video player ke **⋮ (three dots)** par click kar ke 'Download' dabaein.")
+                    video_url = video_only_options[0]["url"]
+                    poster_url = data.get("thumbnail") or ""
+                    
+                    # HTML5 Video Tag with Poster (Thumbnail) shows first
+                    st.markdown(
+                        f'''
+                        <video controls poster="{poster_url}" style="width:100%; border-radius:10px; background-color:black; box-shadow: 0 4px 10px rgba(0,0,0,0.3);">
+                            <source src="{video_url}" type="video/mp4">
+                            Your browser does not support the video tag.
+                        </video>
+                        ''', 
+                        unsafe_allow_html=True
+                    )
                 elif audio_only_options:
                     if data.get("thumbnail"):
                         st.image(data["thumbnail"], width='stretch')
@@ -272,13 +257,13 @@ if url_input:
                 else:
                     st.info("No interactive preview available.")
                     
-            # --- RIGHT COLUMN (METADATA AND UTILITY BUTTONS) ---
+            # --- RIGHT COLUMN (METADATA AND DOWNLOAD BUTTONS) ---
             with col2:
                 st.subheader(data.get("title", "Post Media"))
                 st.write(f"**Platform:** {data.get('source', 'Social Media')}")
                 st.write("---")
 
-                # --- 1. HANDLING SLIDESHOWS (TikTok / Instagram Carousels) ---
+                # --- 1. HANDLING SLIDESHOWS (TikTok / Instagram) ---
                 if slides:
                     st.write(f"### 📸 Photos Found ({len(slides)})")
                     for i, slide in enumerate(slides):
@@ -294,32 +279,19 @@ if url_input:
 
                 # --- 2. HANDLING VIDEOS & AUDIO ---
                 if options:
-                    # A. YOUTUBE BEHAVIOR (Guiding user to the working Left-side player)
-                    if is_youtube:
-                        st.write("### ⭐ Recommended Download:")
-                        st.info("💡 **Best Method:** Left side par chalne wale **video player ke three-dots (⋮)** par click kar ke **'Download'** dabayein. Yeh option hamesha baghair kisi error ke kaam karta hai.")
+                    st.write("### ⬇️ Download Media:")
+                    
+                    if best_option:
+                        st.write("⭐ **Recommended Best Video:**")
                         
-                        if best_option:
+                        if is_youtube:
+                            # YouTube uses direct browser streaming anchor to bypass geolocked cloud IP blocks
                             st.markdown(
-                                f'<a href="{best_option["url"]}" target="_blank" class="yt-btn">🔗 Open Video in New Tab (Fallback)</a>', 
+                                f'<a href="{best_option["url"]}" download="video_{best_option["res_val"]}p.mp4" class="open-link-btn" style="background-color: #2E7D32;">🚀 Save Best Quality: {best_option["label"].replace("🎥", "")} (Auto)</a>', 
                                 unsafe_allow_html=True
                             )
-                            st.write("---")
-
-                        st.write("### 🎛️ Other Resolutions (Fallback Links):")
-                        for i, opt in enumerate(options):
-                            if best_option and opt["url"] == best_option["url"]:
-                                continue
-                            st.markdown(
-                                f'<a href="{opt["url"]}" target="_blank" class="open-link-btn">🔗 Open {opt["label"]}</a>', 
-                                unsafe_allow_html=True
-                            )
-
-                    # B. TIKTOK / INSTAGRAM BEHAVIOR (Direct Server-side save button works perfectly)
-                    else:
-                        st.write("### ⬇️ Save to Device:")
-                        if best_option:
-                            st.write("⭐ **Recommended Best Video:**")
+                        else:
+                            # Direct server stream download
                             st.download_button(
                                 label=f"🚀 Direct Download: {best_option['label']}",
                                 data=make_download_callback(best_option["url"]),
@@ -328,14 +300,21 @@ if url_input:
                                 type="primary",
                                 key="dl_best_native"
                             )
-                            st.write("---")
+                        st.write("---")
 
-                        for i, opt in enumerate(options):
-                            if best_option and opt["url"] == best_option["url"]:
-                                continue
-                            ext = "mp4" if opt["type"] == "video" else "mp3"
-                            mime_type = "video/mp4" if opt["type"] == "video" else "audio/mpeg"
-                            
+                    # Other resolutions
+                    for i, opt in enumerate(options):
+                        if best_option and opt["url"] == best_option["url"]:
+                            continue
+                        ext = "mp4" if opt["type"] == "video" else "mp3"
+                        mime_type = "video/mp4" if opt["type"] == "video" else "audio/mpeg"
+                        
+                        if is_youtube:
+                            st.markdown(
+                                f'<a href="{opt["url"]}" download="media_{opt.get("res_val", "audio")}.{ext}" class="open-link-btn">📥 Download {opt["label"]}</a>', 
+                                unsafe_allow_html=True
+                            )
+                        else:
                             st.download_button(
                                 label=f"📥 Download {opt['label']}",
                                 data=make_download_callback(opt["url"]),
